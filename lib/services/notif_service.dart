@@ -4,17 +4,35 @@ import 'dart:ui';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_native_timezone/flutter_native_timezone.dart';
 import 'package:flutter_reminder_app/services/download_util.dart';
-import 'package:rxdart/subjects.dart';
+import 'package:rxdart/rxdart.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
 class NotificationService {
-  NotificationService();
-  final text = Platform.isIOS;
-  final BehaviorSubject<String> behaviorSubject = BehaviorSubject();
+  static final NotificationService instance = NotificationService._internal();
 
-  final _localNotifications = FlutterLocalNotificationsPlugin();
+  factory NotificationService(
+      {required void Function(NotificationResponse)
+          backgroundResponseHandler}) {
+    instance.backgroundResponseHandler = backgroundResponseHandler;
+    return instance;
+  }
+
+  NotificationService._internal();
+
+  // NotificationService({required this.backgroundResponseHandler});
+  final text = Platform.isIOS;
+  NotificationAppLaunchDetails? _notificationAppLaunchDetails;
+  late void Function(NotificationResponse) backgroundResponseHandler;
+  static int notifId = 0;
+  final BehaviorSubject<NotificationResponse> _behaviorSubject =
+      BehaviorSubject();
+  final BehaviorSubject<List<PendingNotificationRequest>> pendingNotifsSubject =
+      BehaviorSubject();
+
+  final localNotifications = FlutterLocalNotificationsPlugin();
   Future<void> initializePlatformNotifications() async {
+    print('INITIALIZED NOTIFICATIONS!');
     const AndroidInitializationSettings initializationSettingsAndroid =
         AndroidInitializationSettings('launch_background');
 
@@ -38,11 +56,20 @@ class NotificationService {
       ),
     );
 
-    await _localNotifications.initialize(
+    await localNotifications.initialize(
       initializationSettings,
       onDidReceiveNotificationResponse: receivedNotification,
+      onDidReceiveBackgroundNotificationResponse: backgroundResponseHandler,
     );
   }
+
+  ValueStream<NotificationResponse> get notifStream => _behaviorSubject.stream;
+
+
+  NotificationAppLaunchDetails? get notifAppLaunchDetails =>
+      _notificationAppLaunchDetails;
+  set setNotifAppLaunchDetails(NotificationAppLaunchDetails? launchDetails) =>
+      _notificationAppLaunchDetails = launchDetails;
 
   Future<NotificationDetails> _notificationDetails() async {
     final bigPicture = await DownloadUtil.downloadAndSaveFile(
@@ -74,11 +101,11 @@ class NotificationService {
           DarwinNotificationAttachment(bigPicture)
         ]);
 
-    final details = await _localNotifications.getNotificationAppLaunchDetails();
+    final details = await localNotifications.getNotificationAppLaunchDetails();
     if (details != null && details.didNotificationLaunchApp) {
       if (details.notificationResponse != null &&
           details.notificationResponse!.payload != null) {
-        behaviorSubject.add(details.notificationResponse!.payload!);
+        _behaviorSubject.add(details.notificationResponse!);
       } else {
         print("WARN: Notif missing response!");
       }
@@ -120,15 +147,14 @@ class NotificationService {
     const DarwinNotificationDetails iosNotificationDetails =
         DarwinNotificationDetails(threadIdentifier: "thread2");
 
-    final details = await _localNotifications.getNotificationAppLaunchDetails();
+    final details = await localNotifications.getNotificationAppLaunchDetails();
     if (details != null && details.didNotificationLaunchApp) {
       if (details.notificationResponse != null &&
           details.notificationResponse!.payload != null) {
-        behaviorSubject.add(details.notificationResponse!.payload!);
+        _behaviorSubject.add(details.notificationResponse!);
       } else {
         print("WARN: Notif missing response!");
       }
-
     }
 
     NotificationDetails platformChannelSpecifics = NotificationDetails(
@@ -145,7 +171,7 @@ class NotificationService {
     required int seconds,
   }) async {
     final platformChannelSpecifics = await _notificationDetails();
-    await _localNotifications.zonedSchedule(
+    await localNotifications.zonedSchedule(
       id,
       title,
       body,
@@ -156,40 +182,49 @@ class NotificationService {
           UILocalNotificationDateInterpretation.absoluteTime,
       androidAllowWhileIdle: true,
     );
+    pendingNotifsSubject
+        .add(await localNotifications.pendingNotificationRequests());
   }
 
+  // Future<void> scheduleBackgroundNotification({})
+
   Future<void> showLocalNotification({
-    required int id,
+    int? id,
     required String title,
     required String body,
     required String payload,
   }) async {
     final platformChannelSpecifics = await _notificationDetails();
-    await _localNotifications.show(
-      id,
+    await localNotifications.show(
+      id ?? notifId++,
       title,
       body,
       platformChannelSpecifics,
       payload: payload,
     );
+    pendingNotifsSubject
+        .add(await localNotifications.pendingNotificationRequests());
   }
 
   Future<void> showPeriodicLocalNotification({
-    required int id,
-    required String title,
-    required String body,
-    required String payload,
+    int? id,
+    String? title,
+    String? body,
+    String? payload,
+    RepeatInterval interval = RepeatInterval.everyMinute,
   }) async {
     final platformChannelSpecifics = await _notificationDetails();
-    await _localNotifications.periodicallyShow(
-      id,
+    await localNotifications.periodicallyShow(
+      id ?? notifId++,
       title,
       body,
-      RepeatInterval.everyMinute,
+      interval,
       platformChannelSpecifics,
       payload: payload,
       androidAllowWhileIdle: true,
     );
+    pendingNotifsSubject
+        .add(await localNotifications.pendingNotificationRequests());
   }
 
   Future<void> showGroupedNotifications({
@@ -197,25 +232,25 @@ class NotificationService {
   }) async {
     final platformChannelSpecifics = await _notificationDetails();
     final groupedPlatformChannelSpecifics = await _groupedNotificationDetails();
-    await _localNotifications.show(
+    await localNotifications.show(
       0,
       "group 1",
       "First reminder",
       platformChannelSpecifics,
     );
-    await _localNotifications.show(
+    await localNotifications.show(
       1,
       "group 1",
       "Second reminder",
       platformChannelSpecifics,
     );
-    await _localNotifications.show(
+    await localNotifications.show(
       3,
       "group 1",
       "Third reminder",
       platformChannelSpecifics,
     );
-    await _localNotifications.show(
+    await localNotifications.show(
       4,
       "group 2",
       "First reminder",
@@ -223,7 +258,7 @@ class NotificationService {
           ? groupedPlatformChannelSpecifics
           : platformChannelSpecifics,
     );
-    await _localNotifications.show(
+    await localNotifications.show(
       5,
       "group 2",
       "Second reminder",
@@ -231,12 +266,14 @@ class NotificationService {
           ? groupedPlatformChannelSpecifics
           : platformChannelSpecifics,
     );
-    await _localNotifications.show(
+    await localNotifications.show(
       6,
       Platform.isIOS ? "group 2" : "Attention",
       Platform.isIOS ? "Third reminder" : "5 missed reminders",
       groupedPlatformChannelSpecifics,
     );
+    pendingNotifsSubject
+        .add(await localNotifications.pendingNotificationRequests());
   }
 
   void onDidReceiveLocalNotification(
@@ -248,22 +285,23 @@ class NotificationService {
     print('id $id');
   }
 
-  void receivedBackgroundNotification(NotificationResponse? payload) {
-    print('RECEIVED BACKGROUND NOTIFICATION');
-    if (payload != null &&
-        payload.payload != null &&
-        payload.payload!.isNotEmpty) {
-      behaviorSubject.add(payload.payload!);
-    }
-  }
+  // void receivedBackgroundNotification(NotificationResponse? payload) {
+  //   print('RECEIVED BACKGROUND NOTIFICATION');
+  //   if (payload != null &&
+  //       payload.payload != null &&
+  //       payload.payload!.isNotEmpty) {
+  //     // _updateSubject(payload.payload!);
+  //     _behaviorSubject.add(payload.payload!);
+  //   }
+  //   // backgroundResponseHandler!(payload);
+  // }
+
   void receivedNotification(NotificationResponse? payload) {
     print('RECEIVED NOTIFICATION');
-    if (payload != null &&
-        payload.payload != null &&
-        payload.payload!.isNotEmpty) {
-      behaviorSubject.add(payload.payload!);
+    if (payload != null) {
+      _behaviorSubject.add(payload);
     }
   }
 
-  void cancelAllNotifications() => _localNotifications.cancelAll();
+  void cancelAllNotifications() => localNotifications.cancelAll();
 }
