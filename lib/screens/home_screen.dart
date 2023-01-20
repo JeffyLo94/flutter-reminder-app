@@ -6,6 +6,7 @@ import 'package:flutter_reminder_app/screens/notification_screen.dart';
 import 'package:flutter_reminder_app/services/background_notif.dart';
 import 'package:flutter_reminder_app/services/notif_service.dart';
 import 'package:flutter_reminder_app/widget/info_value_widget.dart';
+import 'package:timezone/timezone.dart' as tz;
 
 class HomePage extends StatefulWidget {
   const HomePage({Key? key, this.title = "Do Something"}) : super(key: key);
@@ -241,7 +242,38 @@ class _HomePageState extends State<HomePage> {
                     textAlign: TextAlign.center,
                   ),
                 ),
-              )
+              ),
+            ],
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              SizedBox(
+                height: btnHt,
+                width: btnWt,
+                // alignment: Alignment.center,
+                child: ElevatedButton(
+                  onPressed: () async {
+                    print('SCHEDULE OLD REMINDER PRESSED');
+                    const snackBar =
+                        SnackBar(content: Text('Scheduled YESTERDAY'));
+                    ScaffoldMessenger.of(context).showSnackBar(snackBar);
+                    await notificationService
+                        .showCustomScheduledLocalNotification(
+                            id: 0,
+                            title: "Scheduled Yesterday",
+                            body: "Time to do something!",
+                            payload: "You just did something! POGGERS!",
+                            dt: tz.TZDateTime.from(
+                                DateTime.now().subtract(Duration(days: 1)),
+                                tz.local));
+                  },
+                  child: const Text(
+                    "Reminder Yesterday",
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
             ],
           ),
           Row(

@@ -65,7 +65,6 @@ class NotificationService {
 
   ValueStream<NotificationResponse> get notifStream => _behaviorSubject.stream;
 
-
   NotificationAppLaunchDetails? get notifAppLaunchDetails =>
       _notificationAppLaunchDetails;
   set setNotifAppLaunchDetails(NotificationAppLaunchDetails? launchDetails) =>
@@ -161,6 +160,29 @@ class NotificationService {
         android: androidPlatformChannelSpecifics, iOS: iosNotificationDetails);
 
     return platformChannelSpecifics;
+  }
+
+  Future<void> showCustomScheduledLocalNotification({
+    required int id,
+    required String title,
+    required String body,
+    required String payload,
+    required tz.TZDateTime dt,
+  }) async {
+    final platformChannelSpecifics = await _notificationDetails();
+    await localNotifications.zonedSchedule(
+      id,
+      title,
+      body,
+      dt,
+      platformChannelSpecifics,
+      payload: payload,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+      androidAllowWhileIdle: true,
+    );
+    pendingNotifsSubject
+        .add(await localNotifications.pendingNotificationRequests());
   }
 
   Future<void> showScheduledLocalNotification({
@@ -303,5 +325,9 @@ class NotificationService {
     }
   }
 
-  void cancelAllNotifications() => localNotifications.cancelAll();
+  Future<void> cancelAllNotifications() async {
+    localNotifications.cancelAll();
+    pendingNotifsSubject
+        .add(await localNotifications.pendingNotificationRequests());
+  }
 }
